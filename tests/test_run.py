@@ -217,3 +217,68 @@ def test_require_env_exists():
     Tests that require_env returns the value of an existing environment variable.
     """
     assert require_env("EXISTING_VAR") == "test_value"
+
+
+@patch("src.run.shutil.rmtree")
+@patch("src.run.db_connect")
+@patch("src.run.get_key")
+@patch("src.run.BitwardenClient")
+@patch.dict(
+    os.environ,
+    {
+        "BW_SERVER": "https://test.server",
+        "DB_PATH": "/tmp/db.db",
+        "PRAGMA_KEY_FILE": "/tmp/db.key",
+        "TEST_MODE": "1",
+        "BACKUP_ATTACHMENTS": "true",
+    },
+)
+def test_main_attachments_archive_and_cleanup(
+    mock_bw_client, mock_get_key, mock_db_connect, mock_rmtree
+):
+    """
+    Tests that enabled attachment backup creates an archive with downloaded attachments and cleans up temporary files.
+    """
+    mock_db_connect.return_value = (MagicMock(), MagicMock())
+    mock_get_key.side_effect = [
+        "id",
+        "secret",
+        "master",
+        "file_pw"
+    ]
+    mock_client_instance = mock_bw_client.return_value
+    mock_client_instance.download_attachments.return_value = 2
+    main()
+    mock_client_instance.create_encrypted_archive.assert_called_once()
+    args = mock_client_instance.create_encrypted_archive.call_args[0]
+    assert args[1].endswith("_attachments.7z") and args[2] == "file_pw"
+    mock_rmtree.assert_called_once()
+
+
+@patch("src.run.db_connect")
+@patch("src.run.get_key")
+@patch("src.run.BitwardenClient")
+@patch.dict(
+    os.environ,
+    {
+        "BW_SERVER": "https://test.server",
+        "BACKUP_ENCRYPTION_MODE": "bitwarden",
+        "DB_PATH": "/tmp/db.db",
+        "PRAGMA_KEY_FILE": "/tmp/db.key",
+        "TEST_MODE": "1",
+        "BACKUP_ATTACHMENTS": "false",
+    },
+)
+def test_main_attachments_disabled(mock_bw_client, mock_get_key, mock_db_connect):
+    """
+    Tests that disabled attachment backup skips attachment downloads and archive creation.
+    """
+    mock_db_connect.return_value = (MagicMock(), MagicMock())
+    mock_get_key.side_effect = ["id", "secret", "master", "file_pw"]
+    mock_client_instance = mock_bw_client.return_value
+
+    main()
+
+    mock_client_instance.export_bitwarden_encrypted.assert_called_once()
+    mock_client_instance.download_attachments.assert_not_called()
+    mock_client_instance.create_encrypted_archive.assert_not_called()

@@ -6,6 +6,8 @@ from sys import stdout
 from src.db import db_connect, get_key
 from src.utils import validate_path
 import re
+import shutil
+import tempfile
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,6 +107,24 @@ def main():
             return
 
         logger.info(f"Export completed successfully to {backup_file}.")
+
+        if os.getenv("BACKUP_ATTACHMENTS", "").lower() in ("1", "true", "yes"):
+            archive_file = os.path.join(
+                backup_dir, f"backup_{timestamp}_attachments.7z"
+            )
+            tmp_dir = tempfile.mkdtemp(prefix="backvault_attachments_")
+            try:
+                count = source.download_attachments(tmp_dir)
+                if count:
+                    source.create_encrypted_archive(tmp_dir, archive_file, file_pw)
+                else:
+                    logger.info("No attachments found; skipping archive.")
+            except Exception as e:
+                logger.error(f"Attachment backup failed: {e}")
+                if os.path.exists(archive_file):
+                    os.remove(archive_file)
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
     finally:
         source.logout()
         logger.info("Successfully logged out.")
