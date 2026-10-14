@@ -369,3 +369,59 @@ def test_encrypt_data():
     password = "test_password"
     encrypted_data = client.encrypt_data(data, password)
     assert encrypted_data != data
+
+
+@patch("src.bw_client.sprun")
+def test_download_and_archive_attachments(mock_sprun, tmp_path):
+    """
+    Tests that attachments are downloaded into per-item folders and packed
+    into a password-protected 7z archive.
+    """
+    import json
+    import py7zr
+    from subprocess import CompletedProcess
+
+    items = [
+        {"id": "item-1", "attachments": [{"id": "a1", "fileName": "x.txt"}]},
+        {"id": "item-2", "attachments": []},
+    ]
+
+    def fake_bw(cmd, **kwargs):
+        if cmd[1:3] == ["list", "items"]:
+            return CompletedProcess(cmd, 0, stdout=json.dumps(items), stderr="")
+        if cmd[1:3] == ["get", "attachment"]:
+            out = cmd[cmd.index("--output") + 1]
+            with open(out, "w") as f:
+                f.write("data")
+            return CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    mock_sprun.side_effect = fake_bw
+    client = BitwardenClient(session="existing_session")
+
+    src = tmp_path / "src"
+    src.mkdir()
+    assert client.download_attachments(str(src)) == 1
+    assert (src / "item-1" / "x.txt").read_text() == "data"
+    assert not (src / "item-2").exists()
+
+    get_call = mock_sprun.call_args_list[1]
+    assert get_call.args[0] == [
+        "bw",
+        "get",
+        "attachment",
+        "x.txt",
+        "--itemid",
+        "item-1",
+        "--output",
+        str(src / "item-1" / "x.txt"),
+    ]
+    assert get_call.kwargs["env"]["BW_SESSION"] == "existing_session"
+
+    archive = tmp_path / "a.7z"
+    client.create_encrypted_archive(str(src), str(archive), "pw")
+    with py7zr.SevenZipFile(archive, "r", password="pw") as z:
+        assert any(n.endswith("item-1/x.txt") for n in z.getnames())
+    with pytest.raises(Exception):
+        with py7zr.SevenZipFile(archive, "r") as z:
+            z.getnames()
