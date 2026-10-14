@@ -387,15 +387,22 @@ class BitwardenClient:
                 continue
             item_dir = os.path.join(dest_dir, item_id)
             os.makedirs(item_dir, exist_ok=True)
+            used: set[str] = set()
             for att in item["attachments"]:
                 name = os.path.basename(str(att.get("fileName") or "")).strip()
                 if name in ("", ".", ".."):
                     name = "attachment"
+                if name in used:
+                    stem, ext = os.path.splitext(name)
+                    i = 1
+                    while f"{stem}_{i}{ext}" in used:
+                        i += 1
+                    name = f"{stem}_{i}{ext}"
                 self._run(
                     cmd=[
                         "get",
                         "attachment",
-                        att["fileName"],
+                        att["id"],
                         "--itemid",
                         item_id,
                         "--output",
@@ -403,6 +410,7 @@ class BitwardenClient:
                     ],
                     capture_json=False,
                 )
+                used.add(name)
                 count += 1
         logger.info(f"Downloaded {count} attachment(s).")
         return count

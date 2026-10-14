@@ -410,7 +410,7 @@ def test_download_and_archive_attachments(mock_sprun, tmp_path):
         "bw",
         "get",
         "attachment",
-        "x.txt",
+        "a1",
         "--itemid",
         "item-1",
         "--output",
@@ -425,3 +425,49 @@ def test_download_and_archive_attachments(mock_sprun, tmp_path):
     with pytest.raises(Exception):
         with py7zr.SevenZipFile(archive, "r") as z:
             z.getnames()
+
+
+@patch("src.bw_client.sprun")
+def test_download_attachments_duplicate_names(mock_sprun, tmp_path):
+    """
+    Tests that attachment ids select downloads and duplicate names get unique suffixes.
+    """
+    import json
+    from subprocess import CompletedProcess
+
+    attachments = [
+        {"id": "a1", "fileName": "x.txt"},
+        {"id": "a2", "fileName": "x_1.txt"},
+        {"id": "a3", "fileName": "x.txt"},
+        {"id": "a4", "fileName": "x.txt"},
+        {"id": "a5", "fileName": "notes"},
+        {"id": "a6", "fileName": "notes"},
+    ]
+    items = [
+        {"id": "item-1", "attachments": attachments},
+        {"id": "item-2", "attachments": [{"id": "a7", "fileName": "x.txt"}]},
+    ]
+    mock_sprun.side_effect = [
+        CompletedProcess(["bw", "list", "items"], 0, stdout=json.dumps(items), stderr=""),
+        *[CompletedProcess([], 0, stdout="", stderr="") for _ in range(7)],
+    ]
+    client = BitwardenClient(session="existing_session")
+
+    assert client.download_attachments(str(tmp_path)) == 7
+
+    commands = [call.args[0] for call in mock_sprun.call_args_list[1:]]
+    assert [cmd[3] for cmd in commands] == [
+        "a1", "a2", "a3", "a4", "a5", "a6", "a7"
+    ]
+    expected_paths = [
+        "item-1/x.txt",
+        "item-1/x_1.txt",
+        "item-1/x_2.txt",
+        "item-1/x_3.txt",
+        "item-1/notes",
+        "item-1/notes_1",
+        "item-2/x.txt",
+    ]
+    assert [cmd[-1] for cmd in commands] == [
+        str(tmp_path / path) for path in expected_paths
+    ]
