@@ -116,16 +116,18 @@ def main():
             try:
                 count = source.download_attachments(tmp_dir)
                 if count:
-                    source.create_encrypted_archive(tmp_dir, archive_file, file_pw)
+                    with tempfile.TemporaryDirectory(
+                        prefix="backvault_archive_"
+                    ) as archive_dir:
+                        tmp_archive = os.path.join(
+                            archive_dir, os.path.basename(archive_file)
+                        )
+                        source.create_encrypted_archive(tmp_dir, tmp_archive, file_pw)
+                        shutil.copy2(tmp_archive, archive_file)
                 else:
                     logger.info("No attachments found; skipping archive.")
             except Exception as e:
                 logger.error(f"Attachment backup failed: {e}")
-                try:
-                    if os.path.exists(archive_file):
-                        os.remove(archive_file)
-                except OSError as rm_err:
-                    logger.warning(f"Failed to remove partial archive: {rm_err}")
                 raise
             finally:
                 try:

@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from src.run import main, require_env
 import os
+from pathlib import Path
 from subprocess import CompletedProcess
 
 
@@ -220,6 +221,7 @@ def test_require_env_exists():
 
 
 @patch("src.run.shutil.rmtree")
+@patch("src.run.shutil.copy2")
 @patch("src.run.db_connect")
 @patch("src.run.get_key")
 @patch("src.run.BitwardenClient")
@@ -234,7 +236,7 @@ def test_require_env_exists():
     },
 )
 def test_main_attachments_archive_and_cleanup(
-    mock_bw_client, mock_get_key, mock_db_connect, mock_rmtree
+    mock_bw_client, mock_get_key, mock_db_connect, mock_copy, mock_rmtree
 ):
     """
     Tests that enabled attachment backup creates an archive with downloaded attachments and cleans up temporary files.
@@ -248,11 +250,16 @@ def test_main_attachments_archive_and_cleanup(
     ]
     mock_client_instance = mock_bw_client.return_value
     mock_client_instance.download_attachments.return_value = 2
+
     main()
+
     mock_client_instance.create_encrypted_archive.assert_called_once()
     args = mock_client_instance.create_encrypted_archive.call_args[0]
     assert args[1].endswith("_attachments.7z") and args[2] == "file_pw"
-    mock_rmtree.assert_called_once()
+    mock_rmtree.assert_called()
+    assert mock_rmtree.call_args_list[0].args[0].startswith("/tmp/backvault_archive")
+    assert mock_rmtree.call_args_list[1].args[0].startswith("/tmp/backvault_attachments")
+    mock_copy.assert_called_once_with(args[1], os.path.join("/tmp", Path(args[1]).name))
 
 
 @patch("src.run.db_connect")
