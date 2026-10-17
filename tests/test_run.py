@@ -220,6 +220,7 @@ def test_require_env_exists():
     assert require_env("EXISTING_VAR") == "test_value"
 
 
+@patch("src.run.os.replace")
 @patch("src.run.shutil.rmtree")
 @patch("src.run.shutil.copy2")
 @patch("src.run.db_connect")
@@ -236,7 +237,8 @@ def test_require_env_exists():
     },
 )
 def test_main_attachments_archive_and_cleanup(
-    mock_bw_client, mock_get_key, mock_db_connect, mock_copy, mock_rmtree
+    mock_bw_client, mock_get_key, mock_db_connect, mock_copy, mock_rmtree,
+    mock_replace
 ):
     """
     Tests that enabled attachment backup creates an archive with downloaded attachments and cleans up temporary files.
@@ -255,11 +257,86 @@ def test_main_attachments_archive_and_cleanup(
 
     mock_client_instance.create_encrypted_archive.assert_called_once()
     args = mock_client_instance.create_encrypted_archive.call_args[0]
-    assert args[1].endswith("_attachments.7z") and args[2] == "file_pw"
+    archive_filename = Path(args[1]).name
+    assert archive_filename.endswith("_attachments.7z") and args[2] == "file_pw"
     mock_rmtree.assert_called()
     assert mock_rmtree.call_args_list[0].args[0].startswith("/tmp/backvault_archive")
     assert mock_rmtree.call_args_list[1].args[0].startswith("/tmp/backvault_attachments")
-    mock_copy.assert_called_once_with(args[1], os.path.join("/tmp", Path(args[1]).name))
+    mock_copy.assert_called_once()
+    staged_archive = mock_copy.call_args.args[1]
+    assert Path(staged_archive).name.startswith(".backvault_archive_")
+    assert Path(staged_archive).name != archive_filename
+    mock_replace.assert_called_once()
+    assert mock_replace.call_args.args[0] == staged_archive
+    assert mock_replace.call_args.args[1].endswith(archive_filename)
+    assert not Path(staged_archive).exists()
+
+
+@pytest.mark.parametrize("existing_archive", [False, True])
+@patch("src.run.shutil.copy2")
+@patch("src.run.datetime")
+@patch("src.run.BitwardenClient")
+@patch("src.run.get_key")
+@patch("src.run.db_connect")
+@patch.dict(
+    os.environ,
+    {
+        "BW_SERVER": "https://test.server",
+        "DB_PATH": "/tmp/db.db",
+        "PRAGMA_KEY_FILE": "/tmp/db.key",
+        "TEST_MODE": "1",
+        "BACKUP_ATTACHMENTS": "true",
+    },
+)
+def test_main_attachment_copy_failure_preserves_final_path(
+    mock_db_connect, mock_get_key, mock_bw_client, mock_datetime, mock_copy,
+    tmp_path, existing_archive
+):
+    mock_db_connect.return_value = (MagicMock(), MagicMock())
+    mock_get_key.side_effect = [
+        "id",
+        "secret",
+        "master",
+        "file_pw"
+    ]
+    final_archive = Path("/tmp") / f"backup_{tmp_path.name}_attachments.7z"
+    staged_files = []
+
+    def create_archive(src_dir, archive_file, password):
+        Path(archive_file).write_bytes(b"complete archive")
+
+    def fail_copy(src, dst):
+        staged_files.append(Path(dst))
+        assert Path(dst).parent == final_archive.parent
+        assert Path(dst) != final_archive
+        Path(dst).write_bytes(b"partial")
+        raise OSError("Copy failed")
+
+    mock_copy.side_effect = fail_copy
+    mock_datetime.now.return_value.strftime.return_value = tmp_path.name
+    mock_client_instance = mock_bw_client.return_value
+    mock_client_instance.download_attachments.return_value = 1
+    mock_client_instance.create_encrypted_archive.side_effect = create_archive
+    try:
+        if existing_archive:
+            final_archive.write_bytes(b"existing valid archive")
+
+        with pytest.raises(OSError, match="Copy failed"):
+            main()
+
+        if existing_archive:
+            assert final_archive.read_bytes() == b"existing valid archive"
+        else:
+            assert not final_archive.exists()
+        assert len(staged_files) == 1
+        assert not staged_files[0].exists()
+        assert not Path(mock_client_instance.download_attachments.call_args.args[0]).exists()
+        assert not Path(
+            mock_client_instance.create_encrypted_archive.call_args.args[1]
+        ).parent.exists()
+        mock_client_instance.logout.assert_called_once()
+    finally:
+        final_archive.unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize("failure_stage", ["download", "archive"])

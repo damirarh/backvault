@@ -123,7 +123,21 @@ def main():
                             archive_dir, os.path.basename(archive_file)
                         )
                         source.create_encrypted_archive(tmp_dir, tmp_archive, file_pw)
-                        shutil.copy2(tmp_archive, archive_file)
+                        fd, staged_archive = tempfile.mkstemp(
+                            prefix=".backvault_archive_", suffix=".tmp", dir=backup_dir
+                        )
+                        try:
+                            os.close(fd)
+                            shutil.copy2(tmp_archive, staged_archive)
+                            os.replace(staged_archive, archive_file)
+                        finally:
+                            try:
+                                if os.path.exists(staged_archive):
+                                    os.remove(staged_archive)
+                            except OSError as e:
+                                logger.warning(
+                                    f"Failed to remove temporary archive: {e}"
+                                )
                 else:
                     logger.info("No attachments found; skipping archive.")
             except Exception as e:
