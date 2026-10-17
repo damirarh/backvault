@@ -126,6 +126,7 @@ def main():
                         os.remove(archive_file)
                 except OSError as rm_err:
                     logger.warning(f"Failed to remove partial archive: {rm_err}")
+                raise
             finally:
                 try:
                     shutil.rmtree(tmp_dir)
