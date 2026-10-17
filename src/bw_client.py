@@ -424,5 +424,6 @@ class BitwardenClient:
         with py7zr.SevenZipFile(
             archive_path, "w", password=password, header_encryption=True
         ) as archive:
-            archive.writeall(src_dir, arcname="")
+            for name in os.listdir(src_dir):
+                archive.writeall(os.path.join(src_dir, name), arcname=name)
         logger.info(f"Attachments archive created at {archive_path}.")

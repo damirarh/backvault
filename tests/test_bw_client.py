@@ -421,7 +421,10 @@ def test_download_and_archive_attachments(mock_sprun, tmp_path):
     archive = tmp_path / "a.7z"
     client.create_encrypted_archive(str(src), str(archive), "pw")
     with py7zr.SevenZipFile(archive, "r", password="pw") as z:
-        assert any(n.endswith("item-1/x.txt") for n in z.getnames())
+        names = z.getnames()
+        assert any(n.endswith("item-1/x.txt") for n in names)
+        # The temporary source directory itself must not be an archive entry
+        assert all(n == "item-1" or n.startswith("item-1/") for n in names)
     with pytest.raises(Exception):
         with py7zr.SevenZipFile(archive, "r") as z:
             z.getnames()
