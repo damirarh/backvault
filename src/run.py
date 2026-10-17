@@ -121,10 +121,18 @@ def main():
                     logger.info("No attachments found; skipping archive.")
             except Exception as e:
                 logger.error(f"Attachment backup failed: {e}")
-                if os.path.exists(archive_file):
-                    os.remove(archive_file)
+                try:
+                    if os.path.exists(archive_file):
+                        os.remove(archive_file)
+                except OSError as rm_err:
+                    logger.warning(f"Failed to remove partial archive: {rm_err}")
             finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+                try:
+                    shutil.rmtree(tmp_dir)
+                except OSError as e:
+                    logger.warning(
+                        f"Failed to remove temporary attachment directory: {e}"
+                    )
     finally:
         source.logout()
         logger.info("Successfully logged out.")
