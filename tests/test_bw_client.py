@@ -425,6 +425,11 @@ def test_download_and_archive_attachments(mock_sprun, tmp_path):
         assert any(n.endswith("item-1/x.txt") for n in names)
         # The temporary source directory itself must not be an archive entry
         assert all(n == "item-1" or n.startswith("item-1/") for n in names)
+        # The archive must be extractable and the file contents must match
+        restored = tmp_path / "restored"
+        z.extractall(path=restored)
+        assert (restored / "item-1" / "x.txt").read_text() == "data"
+    # The archive contents cannot be listed without the password
     with pytest.raises(Exception):
         with py7zr.SevenZipFile(archive, "r") as z:
             z.getnames()
