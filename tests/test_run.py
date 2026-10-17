@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 from src.run import main, require_env
 import os
 from pathlib import Path
+from shutil import copy2
 from subprocess import CompletedProcess
 
 
@@ -292,6 +293,9 @@ def test_main_attachment_copy_failure_preserves_final_path(
     mock_db_connect, mock_get_key, mock_bw_client, mock_datetime, mock_copy,
     tmp_path, existing_archive
 ):
+    """
+    Tests that a failure during the copy of the final archive preserves the existing archive if it exists, and cleans up temporary files.
+    """
     mock_db_connect.return_value = (MagicMock(), MagicMock())
     mock_get_key.side_effect = [
         "id",
@@ -334,6 +338,62 @@ def test_main_attachment_copy_failure_preserves_final_path(
         assert not Path(
             mock_client_instance.create_encrypted_archive.call_args.args[1]
         ).parent.exists()
+        mock_client_instance.logout.assert_called_once()
+    finally:
+        final_archive.unlink(missing_ok=True)
+
+
+@patch("src.run.shutil.copy2", wraps=copy2)
+@patch("src.run.datetime")
+@patch("src.run.BitwardenClient")
+@patch("src.run.get_key")
+@patch("src.run.db_connect")
+@patch.dict(
+    os.environ,
+    {
+        "BW_SERVER": "https://test.server",
+        "DB_PATH": "/tmp/db.db",
+        "PRAGMA_KEY_FILE": "/tmp/db.key",
+        "TEST_MODE": "1",
+        "BACKUP_ATTACHMENTS": "true",
+    },
+)
+def test_main_attachment_copy_success_publishes_archive(
+    mock_db_connect, mock_get_key, mock_bw_client, mock_datetime, mock_copy,
+    tmp_path
+):
+    """
+    Tests that a successful copy of the final archive publishes the archive and cleans up temporary files.
+    """
+    mock_db_connect.return_value = (MagicMock(), MagicMock())
+    mock_get_key.side_effect = [
+        "id",
+        "secret",
+        "master",
+        "file_pw"
+    ]
+    mock_datetime.now.return_value.strftime.return_value = tmp_path.name
+    final_archive = Path("/tmp") / f"backup_{tmp_path.name}_attachments.7z"
+    mock_client_instance = mock_bw_client.return_value
+    mock_client_instance.download_attachments.return_value = 1
+
+    def create_archive(src_dir, archive_file, password):
+        Path(archive_file).write_bytes(b"complete archive")
+
+    mock_client_instance.create_encrypted_archive.side_effect = create_archive
+    try:
+        main()
+
+        assert final_archive.read_bytes() == b"complete archive"
+        mock_copy.assert_called_once()
+        source_archive, staged_archive = map(Path, mock_copy.call_args.args)
+        assert staged_archive.parent == final_archive.parent
+        assert staged_archive != final_archive
+        assert not staged_archive.exists()
+        assert not source_archive.parent.exists()
+        assert not Path(
+            mock_client_instance.download_attachments.call_args.args[0]
+        ).exists()
         mock_client_instance.logout.assert_called_once()
     finally:
         final_archive.unlink(missing_ok=True)
