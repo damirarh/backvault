@@ -262,6 +262,60 @@ def test_main_attachments_archive_and_cleanup(
     mock_copy.assert_called_once_with(args[1], os.path.join("/tmp", Path(args[1]).name))
 
 
+@pytest.mark.parametrize("failure_stage", ["download", "archive"])
+@patch("src.run.shutil.rmtree")
+@patch("src.run.db_connect")
+@patch("src.run.get_key")
+@patch("src.run.BitwardenClient")
+@patch.dict(
+    os.environ,
+    {
+        "BW_SERVER": "https://test.server",
+        "DB_PATH": "/tmp/db.db",
+        "PRAGMA_KEY_FILE": "/tmp/db.key",
+        "TEST_MODE": "1",
+        "BACKUP_ATTACHMENTS": "true",
+    },
+)
+def test_main_attachment_failure_raises_exception(
+    mock_bw_client, mock_get_key, mock_db_connect, mock_rmtree, failure_stage
+):
+    """
+    Tests that a failure during attachment download or archive creation raises an exception and cleans up temporary files.
+    """
+    mock_db_connect.return_value = (MagicMock(), MagicMock())
+    mock_get_key.side_effect = [
+        "id",
+        "secret",
+        "master",
+        "file_pw"
+    ]
+    mock_client_instance = mock_bw_client.return_value
+    mock_client_instance.download_attachments.return_value = 2
+
+    def fail_download(src_dir):
+        raise RuntimeError("Download failed")
+
+    def fail_archive(src_dir, archive_file, password):
+        raise RuntimeError("Archive failed")
+
+    if failure_stage == "download":
+        mock_client_instance.download_attachments.side_effect = fail_download
+    else:
+        mock_client_instance.create_encrypted_archive.side_effect = fail_archive
+
+    with pytest.raises(RuntimeError, match="failed"):
+        main()
+
+    mock_rmtree.assert_called()
+    attachment_dir = mock_client_instance.download_attachments.call_args[0][0]
+    assert mock_rmtree.call_args_list[-1].args[0] == attachment_dir
+    if failure_stage == "archive":
+        archive_file = mock_client_instance.create_encrypted_archive.call_args[0][1]
+        assert mock_rmtree.call_args_list[0].args[0] == os.path.dirname(archive_file)
+    mock_client_instance.logout.assert_called_once()
+
+
 @patch("src.run.db_connect")
 @patch("src.run.get_key")
 @patch("src.run.BitwardenClient")
