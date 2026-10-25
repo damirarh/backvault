@@ -116,15 +116,40 @@ def main():
             try:
                 count = source.download_attachments(tmp_dir)
                 if count:
-                    source.create_encrypted_archive(tmp_dir, archive_file, file_pw)
+                    with tempfile.TemporaryDirectory(
+                        prefix="backvault_archive_"
+                    ) as archive_dir:
+                        tmp_archive = os.path.join(
+                            archive_dir, os.path.basename(archive_file)
+                        )
+                        source.create_encrypted_archive(tmp_dir, tmp_archive, file_pw)
+                        fd, staged_archive = tempfile.mkstemp(
+                            prefix=".backvault_archive_", suffix=".tmp", dir=backup_dir
+                        )
+                        try:
+                            os.close(fd)
+                            shutil.copy2(tmp_archive, staged_archive)
+                            os.replace(staged_archive, archive_file)
+                        finally:
+                            try:
+                                if os.path.exists(staged_archive):
+                                    os.remove(staged_archive)
+                            except OSError as e:
+                                logger.warning(
+                                    f"Failed to remove temporary archive: {e}"
+                                )
                 else:
                     logger.info("No attachments found; skipping archive.")
             except Exception as e:
                 logger.error(f"Attachment backup failed: {e}")
-                if os.path.exists(archive_file):
-                    os.remove(archive_file)
+                raise
             finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+                try:
+                    shutil.rmtree(tmp_dir)
+                except OSError as e:
+                    logger.warning(
+                        f"Failed to remove temporary attachment directory: {e}"
+                    )
     finally:
         source.logout()
         logger.info("Successfully logged out.")
